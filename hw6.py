@@ -34,81 +34,108 @@ class ActivationFunctions:
         return exp_z / np.sum(exp_z, axis=0, keepdims=True)
 
 
-class DeepNeuralNetwork:
-    def __init__(self, layer_dims):
-        self.parameters = self.initialize_parameters(layer_dims)
+class Neuron:
+    def __init__(self, weights, bias):
+        self.weights = weights
+        self.bias = bias
 
-    def initialize_parameters(self, layer_dims):
-        parameters = {}
-        for i in range(1, len(layer_dims)):
-            parameters["W" + str(i)] = (
-                np.random.randn(layer_dims[i], layer_dims[i - 1]) * 0.01
-            )
-            parameters["b" + str(i)] = np.zeros((layer_dims[i], 1))
-        return parameters
+    def forward(self, inputs):
+        self.inputs = inputs
+        self.outputs = np.dot(self.weights, inputs) + self.bias
+        return self.outputs
 
-    def forword_propagation(self, X):
-        forward = {"A0": X}
-        # There are W and b in parameters, total is 2L
-        final_layer = len(self.parameters) // 2
 
-        for l in range(1, final_layer + 1):
-            forward["Z" + str(l)] = (
-                np.dot(self.parameters["W" + str(l)], forward["A" + str(l - 1)])
-                + self.parameters["b" + str(l)]
-            )
+class Layer:
+    # output_size is the number of neurons in this layer (each neuron will produce one output)
+    def __init__(self, input_size, output_size, activation_func):
+        # weight vector: np.random.randn(input_size); bias: np.random.randn()
+        self.neurons = [
+            Neuron(np.random.randn(input_size), np.random.randn())
+            for _ in range(output_size)
+        ]
+        self.activation_func = activation_func
+        self.output = None
 
-            # Output layer: use softmax function
-            if l == final_layer:
-                forward["A" + str(l)] = ActivationFunctions.softmax(
-                    forward["Z" + str(l)]
-                )
-            # Hidden layers: use ReLU function
+    def forward(self, inputs):
+        # call forward method in the Neuron class
+        outputs = np.array([neuron.forward(inputs) for neuron in self.neurons]).reshape(
+            -1, 1
+        )
+        self.output = self.activation_func(outputs)
+        return self.output
+
+
+class ForwardPropagation:
+    def __init__(self, layers):
+        self.layers = layers
+
+    def forward(self, input):
+        # the output of each layer becomes the input for the next layer
+        for layer in self.layers:
+            input = layer.forward(input)
+        return input
+
+
+class BackwardPropagation:
+    def __init__(self, network):
+        self.network = network
+
+    def backward(self, input, actual):
+        # Compute the output of the network (forward propagation)
+        predicted = self.network.forward(input)
+        m = actual.shape[1]
+
+        loss = self.network.loss_function(predicted, actual)
+
+        for i in reversed(range(len(self.network.layers))):
+            layer = self.network.layers[i]
+
+            # Get the input for the current layer
+            if i == 0:
+                layer_input = input
             else:
-                forward["A" + str(l)] = ActivationFunctions.ReLU(forward["Z"] + str(l))
+                layer_input = self.network.layers[i - 1].output
 
-        return forward["A" + str(final_layer)], forward
+            # Compute the derivative of the activation function
+            if layer.activation_func == ActivationFunctions.sigmoid:
+                derivative_activation = layer.output * (1 - layer.output)
+            elif layer.activation_func == ActivationFunctions.ReLU:
+                derivative_activation = np.where(layer.output > 0, 1, 0)
+            elif layer.activation_func == ActivationFunctions.tanh:
+                derivative_activation = 1 - np.square(layer.output)
+            else:
+                derivative_activation = 1
+
+            # Multiply the loss by the derivative of the activation function
+            loss *= derivative_activation
+
+            # Compute the gradients
+            d_weights = np.dot(layer_input, loss.T) / m
+            d_bias = np.sum(loss, axis=1, keepdims=True) / m
+
+            # Update weights and biases of the current layer
+            layer.weights -= d_weights.T
+            layer.bias -= d_bias
+
+            # Progagate the loss to the previous layer
+            if i > 0:
+                prev_layer = self.network.layers[i - 1]
+                loss = np.dot(prev_layer.weights, loss)
+
+
+class DeepNeuralNetwork:
+    def __init__(self, layers):
+        self.layers = layers
+        self.forward_propagation = ForwardPropagation(layers)
+        self.backward_propagation = BackwardPropagation(self)
+
+    def forward(self, input):
+        return self.forward_propagation.forward(input)
+
+    def backward(self, input, actual):
+        return self.backward_propagation.backward(input, actual)
 
     def loss_function(self, A_output, Y):
         m = Y.shape[1]
-        E = np.ones(Y.shape)
-        cost = -(1 / m) * np.sum(
-            Y * np.log(A_output.T) + (E - Y) * np.log((E - A_output).T)
-        )
-        return cost
-
-    def backward_propagation(self, Y, forward):
-        grads = {}
-        L = len(self.parameters) // 2
-        m = Y.shape[1]
-
-        # Gradients for the output layer L
-        AL = forward["A" + str(L)]
-        grads["dZ" + str(L)] = AL - Y
-        grads["dW" + str(L)] = (
-            np.dot(grads["dZ" + str(L)], forward["A" + str(L - 1)].T) / m
-        )
-        grads["db" + str(L)] = np.sum(grads["dZ" + str(L)], axis=1, keepdims=True) / m
-
-        # Gradients for the hidden layers L-1 down to 1
-        for l in reversed(range(1, L)):
-            dZ_next = grads["dZ" + str(l + 1)]
-            W_next = self.parameters["W" + str(l + 1)]
-            Z_curr = forward["Z" + str(l)]
-            A_prev = forward["A" + str(l - 1)]
-
-            grads["dA" + str(l)] = np.dot(W_next.T, dZ_next)
-            grads["dZ" + str(l)] = grads["dA" + str(l)] * (Z_curr > 0)
-            grads["dW" + str(l)] = np.dot(grads["dZ" + str(l)], A_prev.T) / m
-            grads["db" + str(l)] = (
-                np.sum(grads["dZ" + str(l)], axis=1, keepdims=True) / m
-            )
-
-        return grads
-
-    def update_parameters(self, grads, learning_rate):
-        final_layer = len(self.parameters) // 2  # number of layers
-
-        for l in range(1, final_layer + 1):
-            self.parameters["W" + str(l)] -= learning_rate * grads["dW" + str(l)]
-            self.parameters["b" + str(l)] -= learning_rate * grads["db" + str(l)]
+        cost = -(1 / m) * np.sum(Y * np.log(A_output + 1e-15))
+        return np.squeeze(cost)
