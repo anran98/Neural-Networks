@@ -112,6 +112,20 @@ class Layer:
         self.d_bias = None
         self.reg_cost = 0  # Regularization cost
 
+    def apply_activation_derivative(self, d_loss):
+        # Apply the derivative of the activation function to the loss gradient
+        if self.activation_func == ActivationFunctions.sigmoid:
+            derivative = self.output * (1 - self.output)
+        elif self.activation_func == ActivationFunctions.ReLU:
+            derivative = np.where(self.output > 0, 1, 0)
+        elif self.activation_func == ActivationFunctions.tanh:
+            derivative = 1 - np.square(np.tanh(self.output))
+        else:
+            # This assumes that the derivative of the linear activation function is 1
+            derivative = 1
+
+        return d_loss * derivative
+
     def forward(self, inputs):
         if self.dropout:
             inputs = self.dropout.apply(inputs)
@@ -135,61 +149,6 @@ class Layer:
             self.reg_cost = 0
 
         return self.outputs
-
-
-class ForwardPropagation:
-    def __init__(self, layers):
-        self.layers = layers
-
-    def forward(self, input):
-        # the output of each layer becomes the input for the next layer
-        for layer in self.layers:
-            input = layer.forward(input)
-        return input
-
-
-class BackwardPropagation:
-    def __init__(self, network):
-        self.network = network
-
-    def backward(self, input, actual):
-        # Compute the output of the network (forward propagation)
-        predicted = self.network.forward(input)
-        m = actual.shape[1]
-
-        d_loss = LossFunctions.binary_cross_entropy_loss_derivative(predicted, actual)
-        # print(f"Initial d_loss shape: {d_loss.shape}")
-
-        for i in reversed(range(len(self.network.layers))):
-            layer = self.network.layers[i]
-
-            # Compute the derivative of the activation function
-            if layer.activation_func == ActivationFunctions.sigmoid:
-                derivative_activation = layer.outputs * (1 - layer.outputs)
-            elif layer.activation_func == ActivationFunctions.ReLU:
-                derivative_activation = np.where(layer.outputs > 0, 1, 0)
-            elif layer.activation_func == ActivationFunctions.tanh:
-                derivative_activation = 1 - np.square(layer.outputs)
-            else:
-                derivative_activation = 1
-
-            # Multiply the loss by the derivative of the activation function
-            d_loss *= derivative_activation
-
-            # Get the input for the current layer
-            if i == 0:
-                layer_input = input
-            else:
-                layer_input = self.network.layers[i - 1].outputs
-
-            # Compute the gradients
-            layer.d_weights = np.dot(d_loss, layer_input.T) / m
-            layer.d_bias = np.sum(d_loss, axis=1, keepdims=True) / m
-
-            # Progagate the loss to the previous layer
-            if i > 0:
-                # prev_layer = self.network.layers[i - 1]
-                d_loss = np.dot(layer.params.weights.T, d_loss)
 
 
 class GradDescent:
@@ -225,8 +184,6 @@ class DeepNeuralNetwork:
     def __init__(self, layer_configs):
         self.layers = []
         self.add_layers(layer_configs)
-        self.forward_propagation = ForwardPropagation(self.layers)
-        self.backward_propagation = BackwardPropagation(self)
 
     def add_layers(self, layer_congigs):
         for config in layer_congigs:
@@ -241,11 +198,54 @@ class DeepNeuralNetwork:
             )
             self.layers.append(new_layer)
 
-    def forward(self, input):
-        return self.forward_propagation.forward(input)
+    @staticmethod
+    def forward(network, input):
+        # the output of each layer becomes the input for the next layer
+        for layer in network.layers:
+            input = layer.forward(input)
+        return input
 
-    def backward(self, input, actual):
-        return self.backward_propagation.backward(input, actual)
+    @staticmethod
+    def backward(network, input_data, actual_output):
+        predicted_output = DeepNeuralNetwork.forward(network, input_data)
+        m = actual_output.shape[1]
+
+        # Start with the derivative of the loss function
+        d_loss = LossFunctions.binary_cross_entropy_loss_derivative(
+            predicted_output, actual_output
+        )
+
+        # Iterate over the layers in reverse for backpropagation
+        for i in reversed(range(len(network.layers))):
+            layer = network.layers[i]
+
+            # Compute the derivative of the activation function
+            if layer.activation_func == ActivationFunctions.sigmoid:
+                derivative_activation = layer.outputs * (1 - layer.outputs)
+            elif layer.activation_func == ActivationFunctions.ReLU:
+                derivative_activation = np.where(layer.outputs > 0, 1, 0)
+            elif layer.activation_func == ActivationFunctions.tanh:
+                derivative_activation = 1 - np.square(layer.outputs)
+            else:
+                derivative_activation = 1
+
+            # Multiply the loss by the derivative of the activation function
+            d_loss *= derivative_activation
+
+            # Get the input for the current layer
+            if i == 0:
+                layer_input = input_data
+            else:
+                layer_input = network.layers[i - 1].outputs
+
+            # Compute the gradients
+            layer.d_weights = np.dot(d_loss, layer_input.T) / m
+            layer.d_bias = np.sum(d_loss, axis=1, keepdims=True) / m
+
+            # Progagate the loss to the previous layer
+            if i > 0:
+                # prev_layer = self.network.layers[i - 1]
+                d_loss = np.dot(layer.params.weights.T, d_loss)
 
     def loss_function(self, A_output, Y, loss_type="binary_cross_entropy"):
         if loss_type == "binary_cross_entropy":

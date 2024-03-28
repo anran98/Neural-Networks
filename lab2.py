@@ -68,8 +68,8 @@ class Training:
                 inputs, outputs
             ):
                 # Forward and backward passes
-                predictions = self.network.forward(inputs_batch)
-                self.network.backward(inputs_batch, outputs_batch)
+                predictions = DeepNeuralNetwork.forward(self.network, inputs_batch)
+                DeepNeuralNetwork.backward(self.network, inputs_batch, outputs_batch)
 
                 # Update parameters using the GradDescent optimizer
                 for layer in network.layers:
@@ -117,7 +117,7 @@ class ModelEvaluator:
 
     def evaluate(self, inputs, outputs):
         # Perform a forward pass with the test data
-        test_predictions = self.network.forward(inputs)
+        test_predictions = DeepNeuralNetwork.forward(self.network, inputs)
 
         # Convert predictions to binary labels with 0.5 as the threshold
         predicted_labels = (test_predictions > 0.5).astype(int)
